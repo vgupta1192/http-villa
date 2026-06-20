@@ -1,0 +1,44 @@
+name: Deploy Murph's Streams to Ultra Seedbox
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SEEDBOX_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SEEDBOX_PORT }}" -H "${{ secrets.SEEDBOX_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync files to seedbox
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.SEEDBOX_PORT }}" \
+            --exclude 'node_modules' \
+            --exclude '.git' \
+            --exclude 'logs' \
+            --exclude '.env' \
+            ./ "${{ secrets.SEEDBOX_USER }}@${{ secrets.SEEDBOX_HOST }}:${{ secrets.SEEDBOX_PATH }}"
+
+      - name: Install deps & reload PM2
+        run: |
+          ssh -i ~/.ssh/deploy_key -p ${{ secrets.SEEDBOX_PORT }} \
+            "${{ secrets.SEEDBOX_USER }}@${{ secrets.SEEDBOX_HOST }}" \
+            "cd ${{ secrets.SEEDBOX_PATH }} && \
+             mkdir -p logs && \
+             npm ci --omit=dev && \
+             (pm2 describe murph-streams > /dev/null 2>&1 && pm2 reload ecosystem.config.js --update-env || pm2 start ecosystem.config.js) && \
+             pm2 save"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
