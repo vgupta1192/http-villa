@@ -685,6 +685,16 @@ async function prewarmStreams(streams) {
 // ==================== EXPRESS ====================
 const app = express();
 
+const compression = require('compression');
+app.set('trust proxy', 1);
+app.use(compression({
+    filter: (req, res) => {
+        // never compress proxied media/streams — only JSON/manifest/static
+        const ct = res.getHeader('Content-Type') || '';
+        return !/video|mpegurl|octet-stream/i.test(String(ct)) && compression.filter(req, res);
+    }
+}));
+
 // ==================== CONFIGURE PAGE ====================
 // Route must be above static middleware so /configure is handled here, not as a static file
 app.get('/configure', (req, res) => {
@@ -1354,14 +1364,13 @@ app.use(getRouter(addonInterface));
 app.listen(PORT, '0.0.0.0', () => {
     const installUrl  = `${PUBLIC_BASE}/manifest.json`;
     const configureUrl = `${PUBLIC_BASE}/configure`;
-    console.log(`
-╔═══════════════════════════════════════════════════════════╗
-║   By Murph Streams v7.1.0 — TURBO EDITION ⚡               ║
-╠═══════════════════════════════════════════════════════════╣
-║  Install   : ${installUrl.padEnd(48)} ║
-║  Configure : ${configureUrl.padEnd(48)} ║
-║  Providers : MB·NM·DF·HH·KHD·KM·AW·HM·FF                 ║
-║  API Mgmt  : Enabled (Circuit Breaker + Queue)           ║
-║  By Murph Streams ⚡ | Telegram: @S4NCHITT               ║
-╚═══════════════════════════════════════════════════════════╝`);
+    const server = app.listen(PORT, '0.0.0.0', () => { /* ...existing startup log... */ });
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    function shutdown(signal) {
+        console.log(`[Addon] ${signal} received — draining connections...`);
+        server.close(() => { console.log('[Addon] Closed out remaining connections.'); process.exit(0); });
+        setTimeout(() => { console.warn('[Addon] Forcing shutdown after timeout.'); process.exit(1); }, 7000);
+    }
+    console.log(`[Addon] Stremio Addon running at ${PUBLIC_BASE}`);
 });
